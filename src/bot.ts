@@ -12,7 +12,6 @@ import {
   DWClient,
   TOPIC_ROBOT,
   type DWClientDownStream,
-  type RobotMessage,
 } from "dingtalk-stream";
 import type { Agent, ContentBlock } from "@vibearound/plugin-channel-sdk";
 import type { AgentStreamHandler } from "./agent-stream.js";
@@ -20,6 +19,30 @@ import type { AgentStreamHandler } from "./agent-stream.js";
 export interface DingTalkConfig {
   client_id: string;
   client_secret: string;
+}
+
+/**
+ * DingTalk robot message — broader shape than the SDK's typed RobotMessage
+ * (which only covers msgtype: "text"). Real DingTalk also sends "picture",
+ * "richText", "audio", "file", etc.
+ */
+interface RobotMessageAny {
+  msgtype: string;
+  conversationId?: string;
+  conversationType?: string;
+  senderStaffId?: string;
+  senderNick?: string;
+  msgId?: string;
+  sessionWebhook?: string;
+  sessionWebhookExpiredTime?: number;
+  // Text
+  text?: { content?: string };
+  // Picture (image)
+  content?: { downloadCode?: string; type?: string };
+  picture?: { picURL?: string };
+  // Rich text (mixed text + images)
+  richText?: Array<{ type?: string; text?: string; downloadCode?: string }>;
+  [key: string]: unknown;
 }
 
 type LogFn = (level: string, msg: string) => void;
@@ -108,7 +131,7 @@ export class DingTalkBot {
     // Register robot message callback
     this.client.registerCallbackListener(TOPIC_ROBOT, (res: DWClientDownStream) => {
       try {
-        const robotMessage = JSON.parse(res.data) as RobotMessage;
+        const robotMessage = JSON.parse(res.data) as RobotMessageAny;
         // Fire-and-forget — DingTalk SDK callback signature is sync
         void this.handleRobotMessage(robotMessage);
       } catch (e) {
@@ -138,18 +161,11 @@ export class DingTalkBot {
     }
   }
 
-  private async handleRobotMessage(msg: RobotMessage): Promise<void> {
-    const text = msg.text?.content?.trim() ?? "";
-    // Use conversationId as the channel/session id
+  private async handleRobotMessage(msg: RobotMessageAny): Promise<void> {
     const channelId = msg.conversationId ?? "unknown";
     const senderId = msg.senderStaffId ?? "unknown";
 
-    if (!text) {
-      this.log("debug", `empty message ignored chat=${channelId}`);
-      return;
-    }
-
-    // Cache the webhook for replies
+    // Cache the webhook for replies (always, even for non-text messages)
     if (msg.sessionWebhook) {
       const expires = msg.sessionWebhookExpiredTime
         ? msg.sessionWebhookExpiredTime
@@ -157,9 +173,68 @@ export class DingTalkBot {
       this.webhooks.set(channelId, { url: msg.sessionWebhook, expires });
     }
 
-    this.log("debug", `message chat=${channelId} sender=${senderId} text=${text.slice(0, 80)}`);
+    // Build content blocks based on msgtype
+    const contentBlocks: ContentBlock[] = [];
+    let preview = "";
 
-    const contentBlocks: ContentBlock[] = [{ type: "text", text }];
+    switch (msg.msgtype) {
+      case "text": {
+        const text = msg.text?.content?.trim() ?? "";
+        if (!text) {
+          this.log("debug", `empty text message ignored chat=${channelId}`);
+          return;
+        }
+        contentBlocks.push({ type: "text", text });
+        preview = text;
+        break;
+      }
+      case "picture":
+      case "image": {
+        // DingTalk image messages — we can't easily download (requires download API)
+        // so we just tell the agent the user sent an image.
+        contentBlocks.push({
+          type: "text",
+          text: "[The user sent an image. DingTalk image download is not yet supported in this plugin — please ask the user to describe the image.]",
+        });
+        preview = "(image)";
+        break;
+      }
+      case "richText": {
+        // Mixed content — extract any text parts
+        const parts = msg.richText ?? [];
+        const textParts = parts
+          .filter((p) => p.type === "text" && p.text)
+          .map((p) => p.text!.trim())
+          .filter(Boolean);
+        const hasImage = parts.some((p) => p.type === "picture");
+        const combined = textParts.join("\n").trim();
+        if (combined || hasImage) {
+          let text = combined;
+          if (hasImage) {
+            text += text ? "\n[The user also sent an image — not yet supported.]" : "[The user sent an image — not yet supported.]";
+          }
+          contentBlocks.push({ type: "text", text });
+          preview = text.slice(0, 80);
+        } else {
+          this.log("debug", `empty richText ignored chat=${channelId}`);
+          return;
+        }
+        break;
+      }
+      default: {
+        this.log("warn", `unsupported msgtype=${msg.msgtype} chat=${channelId}`);
+        // Tell the user we got something we can't handle
+        await this.sendText(
+          channelId,
+          `(Unsupported message type: ${msg.msgtype}. Please send text.)`,
+        );
+        return;
+      }
+    }
+
+    if (contentBlocks.length === 0) return;
+
+    this.log("debug", `message chat=${channelId} sender=${senderId} type=${msg.msgtype} preview=${preview}`);
 
     this.streamHandler?.onPromptSent(channelId);
 
