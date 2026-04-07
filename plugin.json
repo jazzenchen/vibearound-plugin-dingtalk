@@ -1,0 +1,25 @@
+{
+  "id": "dingtalk",
+  "name": "DingTalk Channel",
+  "version": "0.1.0",
+  "kind": "channel",
+  "runtime": "node",
+  "entry": "dist/main.js",
+  "build": "npm install && npm run build",
+  "minHostVersion": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "client_id": { "type": "string", "description": "DingTalk AppKey (Client ID) from Developer Console" },
+      "client_secret": { "type": "string", "description": "DingTalk AppSecret (Client Secret)" }
+    },
+    "required": ["client_id", "client_secret"]
+  },
+  "capabilities": {
+    "streaming": false,
+    "interactiveCards": true,
+    "reactions": false,
+    "editMessage": false,
+    "media": false
+  }
+}
