@@ -96,21 +96,21 @@ export class DingTalkBot {
   }
 
   /** Get the latest webhook for a session, if still valid. */
-  private getWebhook(channelId: string): string | null {
-    const entry = this.webhooks.get(channelId);
+  private getWebhook(chatId: string): string | null {
+    const entry = this.webhooks.get(chatId);
     if (!entry) return null;
     if (Date.now() >= entry.expires) {
-      this.webhooks.delete(channelId);
+      this.webhooks.delete(chatId);
       return null;
     }
     return entry.url;
   }
 
   /** Send a text reply to a DingTalk session via the sessionWebhook URL. */
-  async sendText(channelId: string, text: string): Promise<void> {
-    const webhook = this.getWebhook(channelId);
+  async sendText(chatId: string, text: string): Promise<void> {
+    const webhook = this.getWebhook(chatId);
     if (!webhook) {
-      this.log("warn", `no valid webhook for channel=${channelId}, dropping reply`);
+      this.log("warn", `no valid webhook for channel=${chatId}, dropping reply`);
       return;
     }
     try {
@@ -129,10 +129,10 @@ export class DingTalkBot {
   }
 
   /** Send a markdown reply via the sessionWebhook URL. */
-  async sendMarkdown(channelId: string, title: string, markdown: string): Promise<void> {
-    const webhook = this.getWebhook(channelId);
+  async sendMarkdown(chatId: string, title: string, markdown: string): Promise<void> {
+    const webhook = this.getWebhook(chatId);
     if (!webhook) {
-      this.log("warn", `no valid webhook for channel=${channelId}, dropping reply`);
+      this.log("warn", `no valid webhook for channel=${chatId}, dropping reply`);
       return;
     }
     try {
@@ -185,7 +185,7 @@ export class DingTalkBot {
   }
 
   private async handleRobotMessage(msg: RobotMessageAny): Promise<void> {
-    const channelId = msg.conversationId ?? "unknown";
+    const chatId = msg.conversationId ?? "unknown";
     const senderId = msg.senderStaffId ?? "unknown";
     const msgId = (msg.msgId as string | undefined) ?? "unknown";
 
@@ -196,7 +196,7 @@ export class DingTalkBot {
       const raw = JSON.stringify(msg);
       this.log(
         "debug",
-        `raw msgtype=${msg.msgtype} chat=${channelId}: ${raw.slice(0, 800)}`,
+        `raw msgtype=${msg.msgtype} chat=${chatId}: ${raw.slice(0, 800)}`,
       );
     }
 
@@ -205,7 +205,7 @@ export class DingTalkBot {
       const expires = msg.sessionWebhookExpiredTime
         ? msg.sessionWebhookExpiredTime
         : Date.now() + 5 * 60 * 1000; // default 5 min
-      this.webhooks.set(channelId, { url: msg.sessionWebhook, expires });
+      this.webhooks.set(chatId, { url: msg.sessionWebhook, expires });
     }
 
     // Build content blocks based on msgtype. For picture and richText we
@@ -220,7 +220,7 @@ export class DingTalkBot {
       case "text": {
         const text = msg.text?.content?.trim() ?? "";
         if (!text) {
-          this.log("debug", `empty text message ignored chat=${channelId}`);
+          this.log("debug", `empty text message ignored chat=${chatId}`);
           return;
         }
         contentBlocks.push({ type: "text", text });
@@ -233,7 +233,7 @@ export class DingTalkBot {
         if (!downloadCode) {
           this.log(
             "warn",
-            `picture message chat=${channelId} missing downloadCode; falling back to placeholder`,
+            `picture message chat=${chatId} missing downloadCode; falling back to placeholder`,
           );
           contentBlocks.push({
             type: "text",
@@ -242,11 +242,11 @@ export class DingTalkBot {
           preview = "(image:nodl)";
           break;
         }
-        const local = await this.downloadImage(channelId, msgId, 0, downloadCode).catch(
+        const local = await this.downloadImage(chatId, msgId, 0, downloadCode).catch(
           (err: unknown) => {
             this.log(
               "warn",
-              `failed to download image chat=${channelId} code=${downloadCode}: ${extractErrorMessage(err)}`,
+              `failed to download image chat=${chatId} code=${downloadCode}: ${extractErrorMessage(err)}`,
             );
             return null;
           },
@@ -300,11 +300,11 @@ export class DingTalkBot {
         for (let i = 0; i < downloadCodes.length; i += 1) {
           const code = downloadCodes[i];
           if (!code) continue;
-          const local = await this.downloadImage(channelId, msgId, i, code).catch(
+          const local = await this.downloadImage(chatId, msgId, i, code).catch(
             (err: unknown) => {
               this.log(
                 "warn",
-                `failed to download richText image[${i}] chat=${channelId}: ${extractErrorMessage(err)}`,
+                `failed to download richText image[${i}] chat=${chatId}: ${extractErrorMessage(err)}`,
               );
               return null;
             },
@@ -321,17 +321,17 @@ export class DingTalkBot {
         }
 
         if (contentBlocks.length === 0) {
-          this.log("debug", `empty richText ignored chat=${channelId}`);
+          this.log("debug", `empty richText ignored chat=${chatId}`);
           return;
         }
         preview = combined.slice(0, 60) || `(richText: ${downloadedCount}/${downloadCodes.length} images)`;
         break;
       }
       default: {
-        this.log("warn", `unsupported msgtype=${msg.msgtype} chat=${channelId}`);
+        this.log("warn", `unsupported msgtype=${msg.msgtype} chat=${chatId}`);
         // Tell the user we got something we can't handle
         await this.sendText(
-          channelId,
+          chatId,
           `(Unsupported message type: ${msg.msgtype}. Please send text.)`,
         );
         return;
@@ -340,21 +340,21 @@ export class DingTalkBot {
 
     if (contentBlocks.length === 0) return;
 
-    this.log("debug", `message chat=${channelId} sender=${senderId} type=${msg.msgtype} preview=${preview}`);
+    this.log("debug", `message chat=${chatId} sender=${senderId} type=${msg.msgtype} preview=${preview}`);
 
-    this.streamHandler?.onPromptSent(channelId);
+    this.streamHandler?.onPromptSent(chatId);
 
     try {
       const response = await this.agent.prompt({
-        sessionId: channelId,
+        sessionId: chatId,
         prompt: contentBlocks,
       });
-      this.log("info", `prompt done chat=${channelId} stopReason=${response.stopReason}`);
-      this.streamHandler?.onTurnEnd(channelId);
+      this.log("info", `prompt done chat=${chatId} stopReason=${response.stopReason}`);
+      this.streamHandler?.onTurnEnd(chatId);
     } catch (error: unknown) {
       const errMsg = extractErrorMessage(error);
-      this.log("error", `prompt failed chat=${channelId}: ${errMsg}`);
-      this.streamHandler?.onTurnError(channelId, errMsg);
+      this.log("error", `prompt failed chat=${chatId}: ${errMsg}`);
+      this.streamHandler?.onTurnError(chatId, errMsg);
     }
   }
 
@@ -368,18 +368,18 @@ export class DingTalkBot {
    * Cached by msgId so retries of the same message don't re-download.
    */
   private async downloadImage(
-    channelId: string,
+    chatId: string,
     msgId: string,
     index: number,
     downloadCode: string,
   ): Promise<DownloadedImage> {
-    const safeChannel = channelId.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeChannel = chatId.replace(/[^a-zA-Z0-9._-]/g, "_");
     const dir = path.join(this.cacheDir, "dingtalk", safeChannel);
     // downloadCode is long and URL-unsafe; use msgId+index for filename.
     // msgId can contain `/`, `+`, `=` (e.g. `msgSaRR7+PVL/TrTU3EqCCFvQ==`)
     // — the unsanitized `/` turns the filename into a phantom subdirectory
     // and fs.writeFile blows up with ENOENT. Sanitize it the same way we
-    // sanitize the channelId.
+    // sanitize the chatId.
     const safeMsgId = msgId.replace(/[^a-zA-Z0-9._-]/g, "_");
     const baseName = `${safeMsgId}-${index}`;
 
@@ -404,7 +404,7 @@ export class DingTalkBot {
 
     this.log(
       "debug",
-      `resolving downloadCode chat=${channelId} msgId=${msgId} idx=${index}`,
+      `resolving downloadCode chat=${chatId} msgId=${msgId} idx=${index}`,
     );
 
     const accessToken = await this.client.getAccessToken();
