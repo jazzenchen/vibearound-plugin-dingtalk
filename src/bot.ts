@@ -342,6 +342,11 @@ export class DingTalkBot {
 
     this.log("debug", `message chat=${chatId} sender=${senderId} type=${msg.msgtype} preview=${preview}`);
 
+    const firstText = contentBlocks[0]?.type === "text" ? contentBlocks[0].text : "";
+    if (firstText && this.streamHandler?.consumePendingText(chatId, firstText)) {
+      return;
+    }
+
     this.streamHandler?.onPromptSent(chatId);
 
     try {
