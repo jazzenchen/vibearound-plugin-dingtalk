@@ -1,4 +1,4 @@
-# @vibearound/plugin-dingtalk
+# @vibearound/plugin-channel-dingtalk
 
 DingTalk (钉钉) channel plugin for [VibeAround](https://github.com/jazzenchen/VibeAround).
 
